@@ -2,8 +2,9 @@ use std::fmt::Debug;
 use std::io::{Write, Read, Seek, SeekFrom};
 
 
-/// Trait for implementing interface to 
-pub trait StorageDrive: Debug {
+
+/// Trait for implementing interface to
+pub trait StorageDrive<const size: u128>: Debug {
     /// Load bytes at location `at` from persistent memory into `into`.
     fn load(&self, at: u128, into: &mut [u8]);
 
@@ -11,27 +12,34 @@ pub trait StorageDrive: Debug {
     fn save(&self, at: u128, from: &[u8]);
     
     /// Get storage device size
-    fn size(&self) -> u128;
+    fn size(&self) -> u128 {
+        size
+    }
 }
 
 /// This type provides an interface to the file system.
 #[derive(Debug)]
-pub struct FileSystem<D: StorageDrive> {
+pub struct FileSystem<const size: u128, D: StorageDrive<size>> {
     drive: D,
-    size: u128,
 }
 
-impl<D: StorageDrive> FileSystem<D> {
+impl<const size: u128, D: StorageDrive<size>> FileSystem<size, D> {
     /// Load file system.
-    pub fn new(drive: D) -> Self {
-        let size = drive.size();
+    pub const fn new(drive: D) -> FileSystem<size, D> {
 
-        Self { drive, size }
+        FileSystem::<size, D> { drive }
     }
 
     /// Check that file system is valid; `Ok()` if valid, `Err()` if not.
     pub fn check(&self) -> Result<(), ()> {
-        todo!()
+        for i in 0..size {
+            let mut buf = [0u8; 1];
+            self.drive.load(i, &mut buf);
+            if buf[0] != 0 {
+                return Err(());
+            }
+        }
+        Ok(())
     }
 
     /// Initialize file system (page 0)
@@ -40,8 +48,20 @@ impl<D: StorageDrive> FileSystem<D> {
     }
 
     /// Get the name of this file system.
-    pub fn name(&self) -> String {
-        todo!()
+    pub fn name(&self) -> &str {
+        let mut name = &mut [0u8; 200];
+
+        self.read(i, &mut buf);
+
+        std::str::from_utf8_mut(name).unwrap()
+    }
+
+    pub unsafe fn read(&self, at: u128, len: usize,  into: &mut [u8]) {
+        let mut buf = [0u8; 1];
+        for i in 0..len {
+            self.drive.load(at + i as u128, &mut buf);
+            into[i] = buf[0];
+        }
     }
 
     /// Allocate space for a new empty file (initially 1 page).
@@ -92,27 +112,16 @@ pub struct Tag {
 }
 
 /// A collection of tags.
-#[derive(Debug)]
-pub struct Tags {
-    tags: Vec<Tag>,
-}
+type Tags = [Tag; 16];
 
-impl Tags {
-    /// Add a tag to the collection.
-    fn add(mut self, tag: &Tag) -> Self {
-        todo!()
-    }
-}
 
 /// Newtype for File index.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct FileId(u64);
+pub type FileId = u64;
 
 /// Date and time (32 bit date, 32 bit time)
 ///
 /// See https://github.com/ardaku/ardaku/blob/main/SYSCALLS.md#fn-now for spec.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct DateTime(u64);
+pub type DateTime = u64;
 
 /// File metadata
 #[derive(Debug)]
@@ -133,7 +142,7 @@ pub struct Metadata {
 const B: usize = 1;
 // Kibibyte
 const KB: usize = 1024 * B;
-// Mibibyte
+// Mebibyte
 const MB: usize = 1024 * KB;
 // File system size
 const FS: usize = 256 * MB;
@@ -158,7 +167,7 @@ impl Emulator {
     }
 }
 
-impl StorageDrive for Emulator {
+impl<const size: u128> StorageDrive<size> for Emulator {
     /// Load bytes at location `at` from persistent memory into `into`.
     fn load(&self, at: u128, into: &mut [u8]) {
         (&self.0).seek(SeekFrom::Start(at.try_into().unwrap())).expect("file system: out of bounds");
